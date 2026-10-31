@@ -1,0 +1,72 @@
+%% ER-діаграма: онлайн-школа, прогноз dropout студента за 14 днів
+%% Перегляд і експорт PNG/SVG: https://mermaid.live
+erDiagram
+
+    %% ===== Бізнесові сутності =====
+    hw2_students    ||--o{ hw2_enrollments : "записується"
+    hw2_courses     ||--o{ hw2_enrollments : "має записи"
+    hw2_enrollments ||--o{ hw2_submissions : "здає ДЗ"
+
+    hw2_students {
+        bigint  student_id  PK
+        date    signup_date "NOT NULL"
+        varchar country     "NOT NULL, ISO-2: UA, PL"
+        text    plan        "NOT NULL, CHECK basic або pro"
+    }
+
+    hw2_courses {
+        integer course_id      PK
+        text    title          "NOT NULL"
+        text    category       "NOT NULL"
+        integer duration_weeks "NOT NULL, CHECK > 0"
+    }
+
+    hw2_enrollments {
+        bigint      student_id  PK, FK "на students"
+        integer     course_id   PK, FK "на courses"
+        timestamptz enrolled_at "NOT NULL"
+        text        status      "NOT NULL, CHECK active, completed, dropped"
+    }
+
+    hw2_submissions {
+        bigint      submission_id PK
+        bigint      student_id    FK "на enrollments, NOT NULL"
+        integer     course_id     FK "на enrollments, NOT NULL"
+        timestamptz submitted_at  "NOT NULL"
+        numeric     score         "NUMERIC(5,2), CHECK 0..100, NULL = не перевірено"
+    }
+
+    %% ===== Offline feature store (історія, для training) =====
+    hw2_students ||--o{ hw2_student_features_offline : "має версії ознак"
+    hw2_students ||--o{ hw2_training_events          : "отримує прогнози"
+
+    hw2_student_features_offline {
+        bigint      student_id               PK, FK "на students"
+        timestamptz valid_from               PK "версія чинна з (включно)"
+        timestamptz valid_to                 "до (не включно), NULL = поточна, CHECK > valid_from"
+        text        plan                     "NOT NULL, план станом на valid_from"
+        integer     lessons_done_14d         "NOT NULL, CHECK >= 0"
+        numeric     avg_score_30d            "NUMERIC(5,2), CHECK 0..100, NULL = ще нема оцінок"
+        integer     days_since_last_activity "NOT NULL, CHECK >= 0"
+    }
+
+    hw2_training_events {
+        bigint      event_id          PK
+        bigint      student_id        FK "на students, NOT NULL"
+        timestamptz prediction_ts     "NOT NULL, момент прогнозу"
+        timestamptz label_horizon_end "NOT NULL, CHECK > prediction_ts"
+        boolean     dropped_out_14d   "NOT NULL, TARGET"
+    }
+
+    %% ===== Online feature store (тільки "зараз", для inference) =====
+    hw2_students ||--o| hw2_student_features_online : "поточні ознаки"
+
+    hw2_student_features_online {
+        bigint      student_id               PK, FK "на students"
+        text        plan                     "NOT NULL, денормалізовано"
+        integer     lessons_done_14d         "NOT NULL, CHECK >= 0"
+        numeric     avg_score_30d            "NUMERIC(5,2), CHECK 0..100"
+        integer     days_since_last_activity "NOT NULL, CHECK >= 0"
+        timestamptz feature_ts               "NOT NULL, станом на коли пораховано"
+        timestamptz updated_at               "NOT NULL, коли записано у вітрину"
+    }
